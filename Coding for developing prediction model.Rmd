@@ -1,0 +1,962 @@
+---
+title: "Prediction model sustained culture conversion"
+author: "Tu Ha"
+date: "2025-08-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#install.packages("pROC")
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(readxl)
+library(naniar)
+library(mice)
+library(Amelia)
+library(dplyr)
+library(VIM)
+library(forcats)
+library(haven)
+library(psfmi)
+library(ggplot2)
+library(miceadds)
+library(MASS)
+library(psfmi)
+library(mitools)
+library(dplyr)
+library(car)
+library(gtsummary)
+library(pROC)
+library(boot)
+library(MESS)
+#install.packages("MESS")
+#install.packages("miceadds")
+#install.packages("flextable")
+library(miceadds)
+library(tableone)
+library(flextable)
+library(boot)
+#install.packages("table1")
+library(table1)
+
+library(epiDisplay)
+library(PredictABEL)
+
+#install.packages("rms")
+library(rms)
+```
+
+```{r}
+# load data
+cleaned_data_3 <- read_excel("cleaned_data_3.xlsx")
+
+# check missing observations in each variable
+cleaned_data_3 %>% 
+  sapply(function(x)sum(is.na(x)))
+```
+
+
+```{r}
+# code all categories as 1,2,3...
+cleaned_data_4 <- cleaned_data_3 %>% 
+  mutate(MTB_load = case_when(
+    MTB_load == "very low" ~ 1,
+    MTB_load == "low" ~ 2,
+    MTB_load == "medium" ~ 3,
+    MTB_load == "high" ~ 4,
+    TRUE ~ NA_real_
+  ),
+  resistance_pattern = case_when(
+    resistance_pattern == "monoDR" ~ 1,
+    resistance_pattern == "MDR" ~ 2,
+    resistance_pattern == "(pre)XDR" ~ 3,
+    TRUE ~ NA_real_
+  ))
+```
+
+# 1. Explore data
+```{r}
+table(cleaned_data_4$MTB_load, cleaned_data_4$late_culture_conversion, useNA = "always")
+round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+
+
+```{r}
+table(cleaned_data_4$alcohol_83d0af_v2_v2, cleaned_data_4$late_culture_conversion, useNA = "always")
+round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+1 None
+2 Light (once a month)
+3 Moderate (once a week)
+4 Heavy (daily)
+
+```{r}
+table(cleaned_data_3$ses_education_level, cleaned_data_3$late_culture_conversion, useNA = "always")
+round(prop.table(table(cleaned_data_3$ses_education_level, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+1 No secondary education
+2 Some secondary education
+3 Matric or higher
+
+```{r}
+table(cleaned_data_3$edu_level, cleaned_data_3$late_culture_conversion, useNA = "always")
+round(prop.table(table(cleaned_data_3$edu_level, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+1: no schooling, 2: primary, 3: secondary, 4: tertiary
+```{r}
+table(cleaned_data_3$hiv_status_control, cleaned_data_3$late_culture_conversion, useNA = "always")
+round(prop.table(table(cleaned_data_3$hiv_status_control, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+0 HIV negative
+1 HIV positive, on ART and viral load controlled
+(Viral load < = 1000)
+2 HIV positive, on ART with no viral load control
+(Viral load >1000)
+3 HIV positive, but not on ART
+```{r}
+table(cleaned_data_3$resistance_pattern, cleaned_data_3$late_culture_conversion, useNA = "always")
+
+round(prop.table(table(cleaned_data_3$resistance_pattern, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+```{r}
+table(cleaned_data_3$qol_usual_activity, cleaned_data_3$late_culture_conversion, useNA = "always")
+round(prop.table(table(cleaned_data_3$qol_usual_activity, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
+```
+
+
+1 I have no problems doing my usual activities
+2 I have slight problems doing my usual activities
+3 I have moderate problems doing my usual
+activities
+4 I have severe problems doing my usual
+activities
+5 I am unable to do my usual activities first dataset 
+
+```{r}
+# create data for imputation
+data_1_pre_impute <- cleaned_data_4 %>% 
+  select(-record_id, -smartt_id, -edu_level, -hiv_status_control, -INH_fill, -FQs_fill )
+
+# percentage of rows containing at least 1 NA
+1- nrow(na.omit(data_1_pre_impute))/ nrow(data_1_pre_impute) 
+# => 29% of rows with any NAs
+```
+
+
+```{r}
+data_1_pre_impute %>% sapply(function(x)sum(is.na(x)))
+#str(data_1_pre_impute)
+#summary(data_1_pre_impute)
+```
+change class for variables before imputation
+```{r}
+data_1_pre_impute<- data_1_pre_impute %>%
+  mutate(
+    MTB_load = as.factor(MTB_load),
+    pretx_sex = as.factor(pretx_sex),
+    ses_education_level = as.factor(ses_education_level),
+    living_alone_37eb74_v2_v2 = as.factor(living_alone_37eb74_v2_v2),
+    smoker_5c21df_v2_v2 = as.factor(smoker_5c21df_v2_v2),
+    alcohol_83d0af_v2_v2 = as.factor(alcohol_83d0af_v2_v2),
+    tretx_dm = as.factor(tretx_dm),
+    prettx_prevtbtx = as.factor(prettx_prevtbtx),
+    late_culture_conversion = as.factor(late_culture_conversion),
+    pretx_hiv = as.factor(pretx_hiv),
+    resistance_pattern = as.factor(resistance_pattern),
+    qol_usual_activity = as.factor(qol_usual_activity)
+  )
+
+# Check the structure to ensure the changes
+str(data_1_pre_impute)
+```
+
+summarise data
+```{r}
+#percentage are calculated after excluding NAs
+tab1 <- CreateTableOne(data = data_1_pre_impute)
+
+tab1_df <- print(tab1, showAllLevels = T)
+#summarize, with NAs included
+summary(tab1)
+```
+
+```{r}
+md.pattern(data_1_pre_impute)
+```
+test for MCAR
+
+```{r}
+mcar_test(data_1_pre_impute) 
+```
+p-value =0.107 > 0.05, fail to reject H0 -> no evidence against MCAR
+
+#2. Multiple imputation
+```{r}
+ini_d1 <- mice(data_1_pre_impute, m=30, maxit=0, seed = 111, print=FALSE)
+ini_d1$method
+
+hist(data_1_pre_impute$hb)
+shapiro.test(data_1_pre_impute$hb)
+
+# => p-value >0.05 ->Hb normally distributed
+
+qqnorm(data_1_pre_impute$hb)
+qqline(data_1_pre_impute$hb, col = "red")
+#=> for hb, use norm in stead of pmm for more efficiency
+
+#summary(data_1_pre_impute)
+
+hist(data_1_pre_impute$bl_age)
+shapiro.test(data_1_pre_impute$bl_age)
+qqnorm(data_1_pre_impute$bl_age)
+qqline(data_1_pre_impute$bl_age, col = "red")
+```
+
+ For sparse categorical data, it may be better to use method pmm instead of logreg, polr or polyreg. Method logreg.boot is a version of logreg that uses the bootstrap to emulate sampling variance. [qol_usual_activity, alcohol_83d0af_v2_v2, resistance_pattern, ses_education_level]
+ 
+```{r}
+meth <- ini_d1$method
+
+meth["qol_usual_activity"] <- "pmm"
+meth["alcohol_83d0af_v2_v2"] <- "pmm"
+meth["resistance_pattern"] <- "pmm"
+meth["ses_education_level"] <- "pmm"
+meth["living_alone_37eb74_v2_v2"] <- "pmm"
+
+meth
+```
+
+ 
+```{r}
+pred_d1 <- ini_d1$predictorMatrix
+
+# Set time_culture_pos as an auxiliary variable for MTB_load
+pred_d1["MTB_load", "time_culture_pos"] <- 1
+# time_culture_pos is not used for imputing other variables
+other_vars <- setdiff(rownames(pred_d1), "MTB_load")
+pred_d1[other_vars, "time_culture_pos"] <- 0
+
+```
+
+
+
+```{r}
+# as number of missing data ~30% -> use m= 30 (number of imputations)
+imp1_d2 <- mice(data_1_pre_impute,
+             pred=pred_d1,method = meth, m=30, maxit = 20, print =FALSE, seed= 111)
+
+# check types of imputation for each variable
+imp1_d2$method
+```
+
+```{r}
+plot(imp1_d2)
+```
+
+
+# 3. Diagnosis MI
+In imputation it is often more informative to focus on distributional discrepancy, the difference between the observed and imputed data
+
+The idea is that good imputations have a distribution similar to the observed data. In other words, the imputations could have been real values had they been observed. Except under MCAR, the distributions do not need to be identical, since strong MAR mechanisms may induce systematic differences between the two distributions. However, any dramatic differences between the imputed and observed data should certainly alert us to the possibility that something is wrong.
+
+```{r}
+stripplot(imp1_d2, cex = c(1, 1.5))
+```
+Kernel density estimates for the marginal distributions of the observed data (blue) and the  m=30  densities per variable calculated from the imputed data (thin red lines).
+
+```{r}
+densityplot(imp1_d2, layout=c(3,1))
+```
+
+Interpretation is more difficult if there are discrepancies. Such discrepancies may be caused by a bad imputation model, by a missing data mechanism that is not MCAR or by a combination of both
+
+```{r}
+bwplot(imp1_d2, layout = c(3, 1))
+
+with(complete(imp1_d2, "long", include = TRUE), {
+    boxplot(hb ~ .imp, main = "Hb across imputations")})
+  
+bwplot(imp1_d2, hb~.imp)
+imp1_d2$imp$hb
+```
+
+a more refined diagnostic tool that aims to compare the distributions of observed and imputed data conditional on the missingness probability. The idea is that under MAR the conditional distributions should be similar if the assumed model for creating multiple imputations has a good fit. These statements first model the probability of each record being incomplete as a function of all variables in each imputed dataset. The probabilities (propensities) are then averaged over the imputed datasets to obtain stability.
+
+assess proportion btw imputed and observed (categorical)
+
+```{r}
+imp1_d2_long_include <- complete(imp1_d2,"long", include = T) %>% # change to long data
+  mutate(imputed=.imp>0,
+         imputed= factor(imputed,
+                         levels=c(F,T),
+                         labels=c("Observed", "Imputed")))
+  
+imp1_d2_long_not_include <- complete(imp1_d2,"long", include = F)
+```
+
+
+```{r}
+# #MTB load
+prop.table(table(imp1_d2_long_include$MTB_load,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+
+# alcohol
+prop.table(table(imp1_d2_long_include$alcohol_83d0af_v2_v2,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+ #smoke
+prop.table(table(imp1_d2_long_include$smoker_5c21df_v2_v2,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+# living alone
+prop.table(table(imp1_d2_long_include$living_alone_37eb74_v2_v2,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+# resistance pattern
+prop.table(table(imp1_d2_long_include$resistance_pattern,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+#education
+prop.table(table(imp1_d2_long_include$ses_education_level,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+# qol
+prop.table(table(imp1_d2_long_include$qol_usual_activity,
+                 imp1_d2_long_include$imputed),
+           margin = 2)
+
+```
+
+# 4. Categorize continuous variables 
+
+```{r}
+tertile_2 <- quantile(imp1_d2_long_not_include$ses_income_before, probs = c(1/3, 2/3))
+tertile_2
+```
+categorize variable
+```{r}
+imp1_d2_long_include_cat_3 <- imp1_d2_long_include %>%
+  mutate(
+    # Age binary
+    bl_age = factor(ifelse(bl_age >= 45, 1, 0), levels = c(0, 1)),
+
+    # BMI: Underweight vs Non-underweight
+    ptretx_bmi = cut(ptretx_bmi, 
+                     breaks = c(-Inf, 18.5, 24.9, 29.9, Inf),
+                     labels = c(1, 0, 0, 0),  # 1: underweight, 0: normal/overweight/obese
+                     right = FALSE),
+    ptretx_bmi = factor(ptretx_bmi, levels = c(0, 1)),
+
+    # Income tertiles
+    ses_income_before = cut(ses_income_before, 
+                            breaks = c(-Inf, tertile_2[1], tertile_2[2], Inf), 
+                            labels = c(0, 1, 2),
+                            right = TRUE),
+    ses_income_before = factor(ses_income_before, levels = c(0, 1, 2)),
+
+    # Hemoglobin: No anemia / Mild / Moderate-Severe
+    hb = case_when(
+      pretx_sex == 2 & hb >= 13.0  ~ 0,
+      pretx_sex == 2 & hb >= 11.0 & hb < 13.0 ~ 1,
+      pretx_sex == 2 & hb < 11.0 ~ 2,
+      pretx_sex == 1 & hb >= 12.0 ~ 0,
+      pretx_sex == 1 & hb >= 11.0 & hb < 12.0 ~ 1,
+      pretx_sex == 1 & hb < 11.0 ~ 2,
+      TRUE ~ NA_real_
+    ),
+    hb = factor(hb, levels = c(0, 1, 2)),
+
+    # MTB load: low/very low, medium, high
+    MTB_load = factor(case_when(
+      MTB_load %in% c(1, 2) ~ 0,
+      MTB_load == 3 ~ 1,
+      MTB_load == 4 ~ 2
+    ), levels = c(0, 1, 2)),
+
+    # QoL: usual activity collapse
+    qol_usual_activity = factor(case_when(
+      qol_usual_activity == 1 ~ 0,
+      qol_usual_activity %in% c(2, 3, 4, 5) ~ 1
+    ), levels = c(0, 1)),
+
+    # Resistance pattern: MonoDR vs MDR/(pre)XDR
+    resistance_pattern = factor(case_when(
+      resistance_pattern == 1 ~ 0,
+      resistance_pattern %in% c(2, 3) ~ 1
+    ), levels = c(0, 1))
+  )
+```
+
+summarise data
+```{r}
+tab1_imputed_3 <- CreateTableOne(data = imp1_d2_long_include_cat_3 %>% filter(.imp==1),strata = "late_culture_conversion")
+
+print(tab1_imputed_3, showAllLevels = T)
+```
+
+
+change into mids
+```{r}
+imp1_d2_long_include_cat_3_red <- imp1_d2_long_include_cat_3 %>% select(-imputed)
+
+mids_3rd <- as.mids(imp1_d2_long_include_cat_3_red)
+```
+
+# 5. Build prediction model 
+## 5.1. Univariable analysis 
+
+```{r}
+# fit null model
+null.model_3 <- with(mids_3rd, glm(late_culture_conversion ~ 1, family = binomial))
+
+# Hemoglobin (HB)
+uni.hb_3 <- with(mids_3rd, glm(late_culture_conversion ~ hb, family = binomial))
+summary(pool(uni.hb_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.hb_3, method = "D3")
+anova(null.model_3, uni.hb_3, method = "D1")
+```
+```{r}
+# MTB Load 
+uni.mtb_load_3 <- with(mids_3rd, glm(late_culture_conversion ~ MTB_load, family = binomial))
+summary(pool(uni.mtb_load_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.mtb_load_3, method = "D3")
+anova(null.model_3, uni.mtb_load_3, method = "D1")
+```
+```{r}
+#  Sex
+uni.sex_3 <- with(mids_3rd, glm(late_culture_conversion ~ pretx_sex, family = binomial))
+summary(pool(uni.sex_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.sex_3, method = "D3")
+anova(null.model_3, uni.sex_3, method = "D1")
+```
+```{r}
+# HIV Status
+uni.hiv_3 <- with(mids_3rd, glm(late_culture_conversion ~ pretx_hiv, family = binomial))
+summary(pool(uni.hiv_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.hiv_3, method = "D3")
+anova(null.model_3, uni.hiv_3, method = "D1")
+```
+```{r}
+# Usual Activity
+uni.usual.activity_3 <- with(mids_3rd, glm(late_culture_conversion ~ qol_usual_activity, family = binomial))
+summary(pool(uni.usual.activity_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.usual.activity_3, method = "D3")
+anova(null.model_3, uni.usual.activity_3, method = "D1")
+```
+```{r}
+# Income
+uni.income_3 <- with(mids_3rd, glm(late_culture_conversion ~ ses_income_before, family = binomial))
+summary(pool(uni.income_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.income_3, method = "D3")
+anova(null.model_3, uni.income_3, method = "D1")
+```
+```{r}
+# Education Level
+uni.edu_3 <- with(mids_3rd, glm(late_culture_conversion ~ ses_education_level, family = binomial))
+summary(pool(uni.edu_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.edu_3, method = "D3")
+anova(null.model_3, uni.edu_3, method = "D1")
+```
+```{r}
+# Living Alone
+uni.living.alone_3 <- with(mids_3rd, glm(late_culture_conversion ~ living_alone_37eb74_v2_v2, family = binomial))
+summary(pool(uni.living.alone_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.living.alone_3, method = "D3")
+anova(null.model_3, uni.living.alone_3, method = "D1")
+```
+```{r}
+# Smoking
+uni.smoke_3 <- with(mids_3rd, glm(late_culture_conversion ~ smoker_5c21df_v2_v2, family = binomial))
+summary(pool(uni.smoke_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.smoke_3, method = "D3")
+anova(null.model_3, uni.smoke_3, method = "D1")
+```
+```{r}
+# Alcohol
+uni.alcohol_3 <- with(mids_3rd, glm(late_culture_conversion ~ alcohol_83d0af_v2_v2, family = binomial))
+summary(pool(uni.alcohol_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.alcohol_3, method = "D3")
+anova(null.model_3, uni.alcohol_3, method = "D1")
+```
+```{r}
+# Prior TB Treatment
+uni.prior_tb_treatment_3 <- with(mids_3rd, glm(late_culture_conversion ~ prettx_prevtbtx, family = binomial))
+summary(pool(uni.prior_tb_treatment_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.prior_tb_treatment_3, method = "D3")
+anova(null.model_3, uni.prior_tb_treatment_3, method = "D1")
+```
+```{r}
+# BMI
+uni.bmi_3 <- with(mids_3rd, glm(late_culture_conversion ~ ptretx_bmi, family = binomial))
+summary(pool(uni.bmi_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.bmi_3, method = "D3")
+anova(null.model_3, uni.bmi_3, method = "D1")
+```
+```{r}
+#  Age
+uni.age_3 <- with(mids_3rd, glm(late_culture_conversion ~ bl_age, family = binomial))
+summary(pool(uni.age_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.age_3, method = "D3")
+anova(null.model_3, uni.age_3, method = "D1")
+```
+```{r}
+#  Resistance Pattern
+uni.resistance_3 <- with(mids_3rd, glm(late_culture_conversion ~ resistance_pattern, family = binomial))
+summary(pool(uni.resistance_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.resistance_3, method = "D3")
+anova(null.model_3, uni.resistance_3, method = "D1")
+```
+```{r}
+#  Diabetes Mellitus (DM)
+uni.dm_3 <- with(mids_3rd, glm(late_culture_conversion ~ tretx_dm, family = binomial))
+summary(pool(uni.dm_3), exponentiate = TRUE, conf.int = TRUE)[c("term", "estimate", "2.5 %", "97.5 %")]
+anova(null.model_3, uni.dm_3, method = "D3")
+anova(null.model_3, uni.dm_3, method = "D1")
+```
+
+## 5.2. multivariable selection
+there are 73 events, -> maximum 7 predictors for  multivariable model
+after univariable analysis, 7 variables: MTB load, usual activity/ qol,  prior TB treatment, malnutrition/ bmi, age, anemia/ hb, (resistance) are chosen => standard multiple regression model can be used (p<0.25)
+
+stepwise backward eliminations are conducted with 30 imputed dataset, models comparision based on AIC. Variables appeared in at least half of models will be chosen. Stepwise AIC across multiple imputations requires running stepAIC() on each imputed dataset individually and then pooling or summarizing the results. This method allows you to identify which variables are robust across the imputations.
+
+(majority) backward elimination: > 50% occuring in the final models
+
+```{r}
+expr <- expression(f1 <- glm(late_culture_conversion ~ MTB_load + hb + ptretx_bmi + qol_usual_activity + bl_age +  prettx_prevtbtx + resistance_pattern, 
+                             family = binomial),
+                   f2 <- step(f1, scope = scope, direction = "backward"))
+
+# Apply the model to the imputed data
+fit_3 <- with(mids_3rd, expr)
+```
+
+```{r}
+formulas_3 <- lapply(fit_3$analyses, formula)
+terms_3 <- lapply(formulas_3, terms)
+votes_3 <- unlist(lapply(terms_3, labels))
+table(votes_3)
+```
+
+hb, MTB_load, prettx_prevtbtx, ptretx_bmi,  qol_usual_activity appear in all models. bl_age in 29 models, resistance_pattern in 1 models
+
+(D1, wald test) backward elimination , choose p-value thresshold = 0.15
+
+```{r}
+fit_pool_3_after_majority <- with(mids_3rd, glm(late_culture_conversion~ MTB_load+ ptretx_bmi + qol_usual_activity + bl_age + hb+ prettx_prevtbtx, family = binomial))
+
+fit_pool_3_not_age <- with(mids_3rd, glm(late_culture_conversion~ MTB_load+ ptretx_bmi + qol_usual_activity + hb+ prettx_prevtbtx, family = binomial))
+
+D1(fit_pool_3_after_majority, fit_pool_3_not_age)
+D3(fit_pool_3_after_majority, fit_pool_3_not_age)
+```
+p-value = 0.119 -> keep age
+
+## 5.3. check multicollinearity with GVIF
+```{r}
+vif_model_3rd <- vif(fit_pool_3_after_majority$analyses[[1]])
+# Display the VIF/GVIF values
+vif_model_3rd
+```
+VIF for continuous or binary predictors.
+GVIF for categorical predictors with more than two levels, along with its power-transformed value GVIF^(1/(2*p)).
+Interpretation of GVIF
+The interpretation of GVIF^(1/(2*p)) is similar to VIF:
+Values close to 1 suggest low multicollinearity.
+Values between 1 and 5 suggest moderate multicollinearity.
+Values above 5 or 10 may indicate high multicollinearity.
+
+# 6. Assess model performance 
+## 6.1. predicted accuracy
+The predictive accuracy of the final model was checked using discrimination (AUC) and calibration (calibration graphs and Hosmer–Lemeshow goodness of fit test) parameters. The Hosmer–Lemeshow goodness of fit test with a p-value greater than 0.05 indicates good calibration, which means that the probability of late culture conversion estimated by the model is similar to the observed probability. An AUC of 0.5 indicates no discrimination ability, while an AUC of 1 indicates perfect discrimination.
+
+AUC across 30 imputed dataset
+```{r}
+# Get the predicted probabilities for each patient in all imputed dataset 
+predicted_probs_list_3rd <- lapply(fit_pool_3_after_majority$analyses, function(model) {
+  predict(model, type = "response")
+})
+range(predicted_probs_list_3rd)
+```
+
+draw AUC plot
+```{r}
+par(pty="s")
+roc_list <- lapply(1:30, function(i) {
+  # Fit the model for each imputation dataset
+  fit <- glm(late_culture_conversion~ bl_age+ hb+ MTB_load+ prettx_prevtbtx +ptretx_bmi+  qol_usual_activity, 
+             family = binomial, 
+             data = complete(mids_3rd, i))
+  
+  # Get predicted probabilities
+  predicted_probs <- predict(fit, type = "response")
+  
+  # Calculate ROC for each imputation
+  roc_obj <- roc(complete(mids_3rd, i)$late_culture_conversion, predicted_probs)
+  return(roc_obj)
+})
+
+# Plot the ROC curves using plot.roc function
+plot.roc(roc_list[[1]], col = "blue", main = "ROC Curves", 
+         print.auc = F, legacy.axes = T) 
+
+class(roc_list[[1]])
+# Add the ROC curves for the other imputed datasets
+for (i in 2:30) {
+  plot.roc(roc_list[[i]], col = rainbow(10)[i], add = TRUE, print.auc = F)
+}
+
+# Add diagonal line representing random chance
+abline(a = 1, b = -1, lty = 2, col = "gray")
+
+```
+
+```{r}
+# Calculate the Youden Index and the corresponding threshold for each ROC curve
+youden_results <- lapply(roc_list, function(roc_obj) {
+  # Get the optimal threshold that maximizes the Youden Index (sensitivity + specificity - 1)
+  coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity", "youden"),
+         transpose = FALSE)
+})
+
+# Extract thresholds and Youden Indexes
+thresholds <- sapply(youden_results, function(res) res$threshold)
+youden_indexes <- sapply(youden_results, function(res) res$youden)
+
+# Print the thresholds and Youden Indexes
+data.frame(Threshold = thresholds, YoudenIndex = youden_indexes)
+```
+
+pooled calibration + AUC: pool_performance Pooling performance measures (AUC): aggregates performance measures from multiple imputed datasets using a method that accounts for the variability between imputations
+```{r}
+pool_performance_3 <- pool_performance(stacked_long_3rd,
+                nimp = 30,
+                     impvar = ".imp",
+                     formula = late_culture_conversion~ bl_age+ hb+ MTB_load+ prettx_prevtbtx +ptretx_bmi+  qol_usual_activity, 
+                    cal.plot=TRUE, plot.method="mean", 
+ groups_cal=7, model_type="binomial")
+
+pool_performance_3$ROC_pooled
+pool_performance_3$R2_pooled
+pool_performance_3$HLtest_pooled
+pool_performance_3$Brier_Scaled_pooled
+```
+R² of 0.2067 suggests that about 20.67% of the variance in the outcome is explained by the model
+The Brier score measures overall performance—it is simply calculated as the mean squared difference between predicted probabilities and actual outcomes.
+The value of the Brier score estimate can range between 0 and 1.  A lower Brier score value indicates a better performing model. 
+
+Hosmo Lemeshow test: to assess goodness-of-fit for logistic models It evaluates whether the observed event rates match the expected event rates across deciles of predicted probabilities.
+
+p-value >0.05 suggests that there is no significant difference between the observed and expected frequencies in your data across different deciles of predicted probabilities. In other words, your model fits the data well according to the Hosmer-Lemeshow test.
+
+overlay calibration
+```{r draft}
+cali_plot <- pool_performance(data = stacked_long_3rd, formula = late_culture_conversion~ bl_age+ hb+ MTB_load+ prettx_prevtbtx +ptretx_bmi+  qol_usual_activity,  
+                 nimp=30, impvar=".imp", 
+                 cal.plot=TRUE, plot.method="overlay", 
+                 groups_cal=7, model_type="binomial")
+```
+
+## 6.2. Internal validation: bootstraping
+The model was internally validated using a bootstrap technique to estimate the degree of over-optimism of the final model when applied to a similar population. Internal validation was performed on the regression coefficient with a 95% confidence interval (CI) and the AUC of the model using 2,000 random bootstrap samples. The AUC difference between the bootstrap and the original full sample measured the optimism of the predictive model.
+
+Ideally, we should first bootstrap and then impute. However, this strategy might be computationally difficult. Instead, we can first impute, then bootstrap, obtain optimism corrected performance measures from each imputed dataset, and finally pool these
+
+Method cv_MI uses imputation within each cross-validation fold definition. By repeating this in several imputation runs, multiply imputed datasets are generated. Method cv_MI_RR uses multiple imputation within the cross-validation definition. MI_cv_naive, applies cross-validation within each imputed dataset. MI_boot draws for each bootstrap step the same cases in all imputed datasets. With boot_MI first bootstrap samples are drawn from the original dataset with missing values and than multiple imputation is applied. For multiple imputation the mice function from the mice package is used. It is recommended to use a minumum of 100 imputation runs for method cv_MI or 100 bootstrap samples for method boot_MI or MI_boot
+
+ Orig (original datasets), Apparent (models applied in bootstrap samples), Test (bootstrap models are applied in original datasets), Optimism (difference between apparent and test) and Corrected (original corrected for optimism).
+
+```{r}
+internal_validate_3 <- psfmi_validate(
+  pobj = pool_D1_model_3rd,
+  val_method = "MI_boot",
+  miceImp = T,
+  int_val = T,
+  nboot = 200, # the number of bootstrap resamples
+  plot.method = "mean",
+  cal.plot = T,
+  groups_cal = 7)
+
+internal_validate_3$intercept_test
+
+str(internal_validate_3)
+
+internal_validate_3$res_boot$R2_app
+```
+
+```{r}
+auc_values <- internal_validate_3$res_boot$ROC_app
+quantile(auc_values, 0.025)
+quantile(auc_values, 0.975)
+```
+
+# 7. Risk score construction
+A simplified risk score was constructed based 
+on the hierarchy of the regression coefficients in the final model 
+(each coefficient was divided by the smallest coefficient (bl_age =0.60) and rounded 
+to the nearest integer). The score’s predictive performance (AUC) 
+was assessed and compared with that of the original model. Mortality 
+risk corresponding to each score was calculated
+
+```{r}
+fit_pool_3_final <- with(mids_3rd, glm(late_culture_conversion~ bl_age+ hb+ MTB_load+ prettx_prevtbtx +ptretx_bmi+  qol_usual_activity, family = binomial))
+
+summary(pool(fit_pool_3_final), conf.int=T)
+tbl_regression(fit_pool_3_final,exponentiate = TRUE)
+#vif(fit_pool_3_final$analyses[[1]])
+```
+
+
+```{r}
+# MTB_low is smallest -> weight of 1
+# age1 (weight of 1)
+0.5627385/ 0.5511816
+
+# hb1 (weight of 1)
+0.7064516/ 0.5511816
+
+# MTB load 2 (weight of 2)
+0.9132189/ 0.5511816
+
+# prettx_prevtbtx (weight of 1)
+0.6715238/0.5511816
+
+# bmi (weight of 1)
+0.6424174/0.5511816
+
+# qol (weight of 1)
+0.7490449/0.5511816
+```
+Total score = 1* age>= 45 + 1 * anemia_mild + 1* MTB_load_medium + 2 * MTB_load_high + 1* pre_TB_treatment + 1* underweight + 1* qol_some_problems
+(baseline: age < 45, MTB_load: low/very low, bmi: non-underweight, hb: non-anemia, qol: no problem, pre_TB_treatment: no)
+
+Total score = 1 * bl_age1 + 1 * hb1 + 1* MTB_load1 + 2* MTB_load2 + 1* prettx_prevtbtx1 + 1* ptretx_bmi0 + 1* qol_usual_activity1
+min = 0, max = 7
+
+```{r}
+imp1_d2_long_include_cat_3_red_score <- imp1_d2_long_include_cat_3_red %>% 
+  mutate(MTB_load_RC1 = if_else(MTB_load==1, 1, 0),
+         MTB_load_RC2 = if_else(MTB_load==2, 1, 0),
+         TotalScore = 1 * as.numeric(as.character(bl_age)) +
+             1 * as.numeric(as.character(hb)) +
+             1 * MTB_load_RC1 +
+             2 * MTB_load_RC2 +
+             1 * as.numeric(as.character(prettx_prevtbtx)) +
+             1 * as.numeric(as.character(ptretx_bmi)) +
+             1 * as.numeric(as.character(qol_usual_activity)))
+
+
+imp1_d2_long_not_include_cat_3_red_score  <- imp1_d2_long_include_cat_3_red_score %>% 
+  filter(.imp!=0)
+
+# check
+imp1_d2_long_not_include_cat_3_red_score %>% 
+  select(bl_age, hb, contains("MTB"), ptretx_bmi , prettx_prevtbtx, qol_usual_activity, late_culture_conversion, TotalScore)
+
+table(imp1_d2_long_not_include_cat_3_red_score$TotalScore)
+
+imp1_d2_long_not_include_cat_3_red_score %>% 
+  filter(TotalScore==2) %>% 
+  filter(late_culture_conversion==1) %>% 
+  distinct(.id)
+```
+
+calculate risk scores
+for stacked 30 imputed datasets (equal contribution of imputed dataset)
+
+
+```{r}
+imp1_d2_long_not_include_cat_3_red_score %>%
+  mutate(TotalScore = case_when(
+    TotalScore %in% 0:1 ~ "0-1",  # Collapse scores 0 and 1 into "0-1"
+    TRUE ~ as.character(TotalScore)  # Keep scores 2-7 unchanged
+  )) %>%
+  group_by(TotalScore) %>%  
+  summarise(
+    total_patients = n(),  # Total patients with this score
+    n_late_culture_conversion = sum(late_culture_conversion == 1),  # Late culture conversion cases
+    Proportion = round(n_late_culture_conversion / total_patients, 3) # Proportion
+  ) %>%
+  arrange(factor(TotalScore, levels = c("0-1", "2", "3", "4", "5", "6", "7")))  # Ensure correct order
+```
+
+
+```{r}
+imp1_d2_long_not_include_cat_3_red_score %>%
+  filter(.imp==2) %>% 
+  filter(TotalScore %in% 0:7) %>%  
+  group_by(TotalScore) %>%  # Group by TotalScore
+  summarise(
+    n_total = n(),  # Total patients with this score
+    n_late_conversion = sum(late_culture_conversion == 1),  # Patients with late culture conversion
+    proportion_late_conversion = n_late_conversion / n_total  # Proportion
+  ) %>%
+  arrange(TotalScore)  
+```
+
+## 7.1. Performance for risk scores
+```{r}
+pool_performance_score <- pool_performance(imp1_d2_long_include_cat_3_red_score,
+                nimp = 30,
+                     impvar = ".imp",
+                     formula = late_culture_conversion~ TotalScore, 
+                    cal.plot=TRUE, plot.method="mean", 
+ groups_cal=5, model_type="binomial")
+
+
+pool_performance(imp1_d2_long_include_cat_3_red_score,
+                nimp = 30,
+                     impvar = ".imp",
+                     formula = late_culture_conversion~ TotalScore, 
+                    cal.plot=TRUE, plot.method="overlay", 
+ groups_cal=5, model_type="binomial")
+
+```
+group_cal: the number of risk groups for calibration
+```{r}
+pool_performance_score$ROC_pooled
+pool_performance_score$coef_pooled
+pool_performance_score$HLtest_pooled
+```
+
+AUC draw for risk score
+
+
+```{r}
+par(pty = "s")
+
+# Plot the first ROC curve
+plot.roc(roc_list[[1]], 
+         col = "blue", 
+      
+         print.auc = FALSE, 
+         legacy.axes = TRUE,
+         main = "ROC curve of simplified risk score",
+         cex.main=0.9)
+
+# Add other ROC curves
+for (i in 2:30) {
+  plot.roc(roc_list[[i]], col = rainbow(10)[i], add = TRUE, print.auc = FALSE)
+}
+
+# Add diagonal line
+abline(a = 1, b = -1, lty = 2, col = "gray")
+
+# Add AUC text
+text(x = 0.3, y = 0.3, 
+     labels = "AUC (95% CI) = 0.72 (0.64–0.79)", 
+     cex = 0.7, font = 1)
+
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# summarise after MI
+table1(~MTB_load + bl_age + pretx_sex + ptretx_bmi+ ses_education_level  | late_culture_conversion, data= stacked_long_3rd)
+table1(~ tretx_dm+ prettx_prevtbtx + pretx_hiv + hb  | late_culture_conversion, data= stacked_long_3rd)
+table1(~living_alone_37eb74_v2_v2 + smoker_5c21df_v2_v2 + alcohol_83d0af_v2_v2   | late_culture_conversion, data= stacked_long_3rd)
+table1(~  qol_usual_activity + ses_income_before + resistance_pattern  | late_culture_conversion, data= stacked_long_3rd)
+```
+
+## 7.2. Youden index 
+threshold that maximizes the sum of sensitivity and specificity — i.e., the point on the ROC curve farthest from the diagonal 
+```{r draft, eval=FALSE, include=FALSE}
+# Extract Youden Index stats for each imputation
+youden_list <- lapply(roc_list, function(roc_obj) {
+  coords(roc_obj,
+         x = "best",                  # "best" threshold
+         best.method = "youden",     # Use Youden Index
+         ret = c("threshold", "sensitivity", "specificity", "youden"),
+         transpose = FALSE)
+})
+
+# Combine into one data frame
+youden_df <- do.call(rbind, youden_list)
+
+# Look at the results
+print(youden_df)
+
+# Get summary statistics
+mean_cutoff <- mean(youden_df$threshold)
+mean_youden <- mean(youden_df$youden)
+
+cat("✅ Mean optimal cutoff (Youden):", round(mean_cutoff, 3), "\n")
+cat("📈 Mean Youden Index:", round(mean_youden, 3), "\n")
+
+```
+
+
+
+
+```{r}
+# 1. Get predicted probabilities per imputation
+pred_matrix <- sapply(1:30, function(i) {
+  dat_i <- complete(mids_3rd_score, i)
+  model <- glm(late_culture_conversion ~ TotalScore, 
+               data = dat_i, family = binomial)
+  predict(model, type = "response")  # vector of predicted probabilities
+})
+
+# 2. Get the average prediction per individual (pooled prediction)
+pooled_preds <- rowMeans(pred_matrix)
+
+# 3. Use the observed outcome from any imputed dataset (e.g., first one)
+true_outcome <- complete(mids_3rd_score, 1)$late_culture_conversion
+
+# 4. Calculate ROC with pooled predicted probabilities
+pooled_roc <- roc(true_outcome, pooled_preds, direction = "<")
+
+# 5. Get optimal threshold using Youden Index
+youden_result <- coords(pooled_roc, 
+                        x = "best", 
+                        best.method = "youden", 
+                        ret = c("threshold", "sensitivity", "specificity", "youden"),
+                        transpose = FALSE)
+
+# 6. View results
+print(youden_result)
+cat("📌 Optimal cutoff (pooled):", round(youden_result$threshold, 3), "\n")
+cat("📈 Youden Index:", round(youden_result$youden, 3), "\n")
+
+```
+threshold: the optimal cut-off (probability) for classification
+
+```{r}
+thresholds <- 0:7  # You want to calculate for thresholds >=1, >=2, ..., >=7
+
+youden_results <- lapply(thresholds, function(threshold) {
+  
+  # Create a binary classification based on the threshold
+  imp1_d2_long_not_include_cat_3_red_score %>%
+    mutate(
+      predicted_class = ifelse(TotalScore >= threshold, 1, 0)  # Predicted class based on TotalScore threshold
+    ) %>%
+    summarise(
+      TP = sum(predicted_class == 1 & late_culture_conversion == 1),   # True positives
+      TN = sum(predicted_class == 0 & late_culture_conversion == 0),   # True negatives
+      FP = sum(predicted_class == 1 & late_culture_conversion == 0),   # False positives
+      FN = sum(predicted_class == 0 & late_culture_conversion == 1)    # False negatives
+    ) %>%
+    mutate(
+      sensitivity = TP / (TP + FN),   # Sensitivity = TP / (TP + FN)
+      specificity = TN / (TN + FP),   # Specificity = TN / (TN + FP)
+      youden_index = sensitivity + specificity - 1   # Youden Index = Sensitivity + Specificity - 1
+    ) %>%
+    mutate(threshold = threshold)   # Add the threshold for identification
+  
+})
+
+# Combine the results into a single dataframe
+youden_df <- bind_rows(youden_results)
+
+# Display the Youden Index values for each threshold
+print(youden_df)
+```
