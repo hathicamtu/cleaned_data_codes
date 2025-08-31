@@ -38,24 +38,18 @@ library(flextable)
 library(boot)
 #install.packages("table1")
 library(table1)
-
 library(epiDisplay)
 library(PredictABEL)
 
-#install.packages("rms")
-library(rms)
 ```
 
 ```{r}
 # load data
 cleaned_data_3 <- read_excel("cleaned_data_3.xlsx")
-
 # check missing observations in each variable
 cleaned_data_3 %>% 
   sapply(function(x)sum(is.na(x)))
 ```
-
-
 ```{r}
 # code all categories as 1,2,3...
 cleaned_data_4 <- cleaned_data_3 %>% 
@@ -73,14 +67,11 @@ cleaned_data_4 <- cleaned_data_3 %>%
     TRUE ~ NA_real_
   ))
 ```
-
 # 1. Explore data
 ```{r}
 table(cleaned_data_4$MTB_load, cleaned_data_4$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
 ```
-
-
 ```{r}
 table(cleaned_data_4$alcohol_83d0af_v2_v2, cleaned_data_4$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
@@ -89,7 +80,6 @@ round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conv
 2 Light (once a month)
 3 Moderate (once a week)
 4 Heavy (daily)
-
 ```{r}
 table(cleaned_data_3$ses_education_level, cleaned_data_3$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$ses_education_level, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
@@ -122,8 +112,6 @@ round(prop.table(table(cleaned_data_3$resistance_pattern, cleaned_data_3$late_cu
 table(cleaned_data_3$qol_usual_activity, cleaned_data_3$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$qol_usual_activity, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
 ```
-
-
 1 I have no problems doing my usual activities
 2 I have slight problems doing my usual activities
 3 I have moderate problems doing my usual
@@ -141,7 +129,6 @@ data_1_pre_impute <- cleaned_data_4 %>%
 1- nrow(na.omit(data_1_pre_impute))/ nrow(data_1_pre_impute) 
 # => 29% of rows with any NAs
 ```
-
 
 ```{r}
 data_1_pre_impute %>% sapply(function(x)sum(is.na(x)))
@@ -169,7 +156,6 @@ data_1_pre_impute<- data_1_pre_impute %>%
 # Check the structure to ensure the changes
 str(data_1_pre_impute)
 ```
-
 summarise data
 ```{r}
 #percentage are calculated after excluding NAs
@@ -184,7 +170,6 @@ summary(tab1)
 md.pattern(data_1_pre_impute)
 ```
 test for MCAR
-
 ```{r}
 mcar_test(data_1_pre_impute) 
 ```
@@ -897,7 +882,7 @@ cat("📈 Mean Youden Index:", round(mean_youden, 3), "\n")
 
 
 ```{r}
-# 1. Get predicted probabilities per imputation
+# Get predicted probabilities per imputation
 pred_matrix <- sapply(1:30, function(i) {
   dat_i <- complete(mids_3rd_score, i)
   model <- glm(late_culture_conversion ~ TotalScore, 
@@ -905,16 +890,16 @@ pred_matrix <- sapply(1:30, function(i) {
   predict(model, type = "response")  # vector of predicted probabilities
 })
 
-# 2. Get the average prediction per individual (pooled prediction)
+# Get the average prediction per individual (pooled prediction)
 pooled_preds <- rowMeans(pred_matrix)
 
-# 3. Use the observed outcome from any imputed dataset (e.g., first one)
+# Use the observed outcome from any imputed dataset (e.g., first one)
 true_outcome <- complete(mids_3rd_score, 1)$late_culture_conversion
 
-# 4. Calculate ROC with pooled predicted probabilities
+# Calculate ROC with pooled predicted probabilities
 pooled_roc <- roc(true_outcome, pooled_preds, direction = "<")
 
-# 5. Get optimal threshold using Youden Index
+# Get optimal threshold using Youden Index
 youden_result <- coords(pooled_roc, 
                         x = "best", 
                         best.method = "youden", 
