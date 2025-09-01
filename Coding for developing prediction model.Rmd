@@ -40,23 +40,24 @@ library(flextable)
 library(boot)
 #install.packages("table1")
 library(table1)
+
 library(epiDisplay)
 library(PredictABEL)
 
+#install.packages("rms")
+library(rms)
 ```
 
 ```{r}
 # load data
 cleaned_data_3 <- read_excel("cleaned_data_3.xlsx")
-<<<<<<< HEAD:Coding-for-developing-prediction-model.Rmd
 
 # check missing observations of each variable
-=======
-# check missing observations in each variable
->>>>>>> 43e67e0abd3b609c01b33d1d6195b78ac040ffd7:Coding for developing prediction model.Rmd
 cleaned_data_3 %>% 
   sapply(function(x)sum(is.na(x)))
 ```
+
+
 ```{r}
 # code all categories as 1,2,3...
 cleaned_data_4 <- cleaned_data_3 %>% 
@@ -74,11 +75,14 @@ cleaned_data_4 <- cleaned_data_3 %>%
     TRUE ~ NA_real_
   ))
 ```
+
 # 1. Explore data
 ```{r}
 table(cleaned_data_4$MTB_load, cleaned_data_4$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
 ```
+
+
 ```{r}
 table(cleaned_data_4$alcohol_83d0af_v2_v2, cleaned_data_4$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
@@ -87,6 +91,7 @@ round(prop.table(table(cleaned_data_3$MTB_load, cleaned_data_3$late_culture_conv
 2 Light (once a month),
 3 Moderate (once a week),
 4 Heavy (daily)
+
 ```{r}
 table(cleaned_data_3$ses_education_level, cleaned_data_3$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$ses_education_level, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
@@ -119,7 +124,6 @@ round(prop.table(table(cleaned_data_3$resistance_pattern, cleaned_data_3$late_cu
 table(cleaned_data_3$qol_usual_activity, cleaned_data_3$late_culture_conversion, useNA = "always")
 round(prop.table(table(cleaned_data_3$qol_usual_activity, cleaned_data_3$late_culture_conversion, useNA = "always")),3)
 ```
-<<<<<<< HEAD:Coding-for-developing-prediction-model.Rmd
 1: I have no problems doing my usual activities,
 2: I have slight problems doing my usual activities,
 3: I have moderate problems doing my usual
@@ -127,15 +131,6 @@ activities,
 4: I have severe problems doing my usual
 activities,
 5: I am unable to do my usual activities first dataset 
-=======
-1 I have no problems doing my usual activities
-2 I have slight problems doing my usual activities
-3 I have moderate problems doing my usual
-activities
-4 I have severe problems doing my usual
-activities
-5 I am unable to do my usual activities first dataset 
->>>>>>> 43e67e0abd3b609c01b33d1d6195b78ac040ffd7:Coding for developing prediction model.Rmd
 
 ```{r}
 # create data for imputation
@@ -146,10 +141,6 @@ data_1_pre_impute <- cleaned_data_4 %>%
 1- nrow(na.omit(data_1_pre_impute))/ nrow(data_1_pre_impute) 
 # => 29% of rows with any NAs
 ```
-<<<<<<< HEAD:Coding-for-developing-prediction-model.Rmd
-=======
-
->>>>>>> 43e67e0abd3b609c01b33d1d6195b78ac040ffd7:Coding for developing prediction model.Rmd
 ```{r}
 data_1_pre_impute %>% sapply(function(x)sum(is.na(x)))
 #str(data_1_pre_impute)
@@ -176,6 +167,7 @@ data_1_pre_impute<- data_1_pre_impute %>%
 # Check the structure to ensure the changes
 str(data_1_pre_impute)
 ```
+
 summarise data
 ```{r}
 #percentage are calculated after excluding NAs
@@ -849,11 +841,8 @@ mean_youden <- mean(youden_df$youden)
 ```
 
 ```{r}
-<<<<<<< HEAD:Coding-for-developing-prediction-model.Rmd
 mids_3rd_score <- as.mids(imp1_d2_long_include_cat_3_red_score)
 
-=======
->>>>>>> 43e67e0abd3b609c01b33d1d6195b78ac040ffd7:Coding for developing prediction model.Rmd
 # Get predicted probabilities per imputation
 pred_matrix <- sapply(1:30, function(i) {
   dat_i <- complete(mids_3rd_score, i)
@@ -879,39 +868,3 @@ youden_result <- coords(pooled_roc,
                         transpose = FALSE)
 print(youden_result)
 ```
-<<<<<<< HEAD:Coding-for-developing-prediction-model.Rmd
-=======
-threshold: the optimal cut-off (probability) for classification
-
-```{r}
-thresholds <- 0:7  # You want to calculate for thresholds >=1, >=2, ..., >=7
-
-youden_results <- lapply(thresholds, function(threshold) {
-  
-  # Create a binary classification based on the threshold
-  imp1_d2_long_not_include_cat_3_red_score %>%
-    mutate(
-      predicted_class = ifelse(TotalScore >= threshold, 1, 0)  # Predicted class based on TotalScore threshold
-    ) %>%
-    summarise(
-      TP = sum(predicted_class == 1 & late_culture_conversion == 1),   # True positives
-      TN = sum(predicted_class == 0 & late_culture_conversion == 0),   # True negatives
-      FP = sum(predicted_class == 1 & late_culture_conversion == 0),   # False positives
-      FN = sum(predicted_class == 0 & late_culture_conversion == 1)    # False negatives
-    ) %>%
-    mutate(
-      sensitivity = TP / (TP + FN),   # Sensitivity = TP / (TP + FN)
-      specificity = TN / (TN + FP),   # Specificity = TN / (TN + FP)
-      youden_index = sensitivity + specificity - 1   # Youden Index = Sensitivity + Specificity - 1
-    ) %>%
-    mutate(threshold = threshold)   # Add the threshold for identification
-  
-})
-
-# Combine the results into a single dataframe
-youden_df <- bind_rows(youden_results)
-
-# Display the Youden Index values for each threshold
-print(youden_df)
-```
->>>>>>> 43e67e0abd3b609c01b33d1d6195b78ac040ffd7:Coding for developing prediction model.Rmd
